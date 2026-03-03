@@ -1,0 +1,80 @@
+const fs = require('fs');
+const { google } = require('googleapis');
+const path = require('path');
+const axios = require('axios');
+
+const KEYFILEPATH = path.join(__dirname, 'credentials.json');
+const SCOPES = ['https://www.googleapis.com/auth/calendar']; 
+const CALENDAR_ID = 'd399fd6624bd772ba4cefdec02b2c9f9ac2bdc97db3bd556c072c8e57b0ad8b7@group.calendar.google.com';
+
+const auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: SCOPES });
+
+function loadBashExports(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const content = fs.readFileSync(filePath, 'utf8');
+  content.split('\n').forEach(line => {
+    const match = line.match(/^export\s+(\w+)=["']?(.+?)["']?$/);
+    if (match) {
+      const [_, key, value] = match;
+      process.env[key] = value;
+    }
+  });
+}
+
+loadBashExports('/usr/local/bin/common_keys.txt');
+
+async function syncMealieToGoogle() {
+  const MEALIE_URL = process.env.MEALIE_URL;
+  const MEALIE_TOKEN = process.env.MEALIE_API_KEY;
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  try {
+    console.log(`[${new Date().toLocaleString()}] Starting Sync...`);
+
+    // Fetch next 14 days
+    const start = new Date().toISOString().split('T')[0];
+    const end = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const mealieResponse = await axios.get(`${MEALIE_URL}/api/households/mealplans?start=${start}&end=${end}`, {
+      headers: { 'Authorization': `Bearer ${MEALIE_TOKEN}` }
+    });
+
+    for (const plan of mealieResponse.data.items) {
+      const mealName = plan.recipe ? plan.recipe.name : (plan.note || 'Unnamed Meal');
+      const mealDate = plan.date; 
+
+      // IMPROVED SEARCH: Check the entire day window 
+      const existing = await calendar.events.list({
+        calendarId: CALENDAR_ID,
+        timeMin: `${mealDate}T00:00:00Z`,
+        timeMax: `${mealDate}T23:59:59Z`,
+        singleEvents: true
+      });
+
+      // Match by summary name
+      const isDuplicate = existing.data.items.some(e => e.summary === mealName);
+
+      if (!isDuplicate) {
+        await calendar.events.insert({
+          calendarId: CALENDAR_ID,
+          requestBody: {
+            summary: mealName,
+            description: 'Synced from Mealie',
+            start: { date: mealDate },
+            end: { date: mealDate }
+          },
+        });
+        console.log(`✅ Added: ${mealName} (${mealDate})`);
+      } else {
+        console.log(`⏭️ Skipped: ${mealName} (${mealDate})`);
+      }
+    }
+    console.log(`[${new Date().toLocaleString()}] Sync Complete.`);
+  } catch (err) {
+    console.error('Sync Error:', err.message);
+  }
+}
+
+// EXECUTION: Run once, then every 1 hour (3600000 ms)
+syncMealieToGoogle();
+setInterval(syncMealieToGoogle, 3600000);

@@ -1,0 +1,7 @@
+# Secrets
+credentials.json
+node_modules/
+.env
+
+# Logs
+*.log
