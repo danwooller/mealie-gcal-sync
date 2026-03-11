@@ -4,11 +4,13 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=dan
+User=root
 WorkingDirectory=/opt/mealie_integration
 ExecStart=/usr/bin/node /opt/mealie_integration/sync_master.js
-StandardOutput=append:/var/log/mealie_sync.log
-StandardError=append:/var/log/mealie_sync.log
+# This ensures logs are sent to journalctl immediately
+Environment=NODE_OPTIONS=--no-warnings
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
