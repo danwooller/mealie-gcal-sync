@@ -6,8 +6,10 @@ const KEYFILEPATH = path.join(__dirname, 'credentials.json');
 const auth = new google.auth.GoogleAuth({ keyFile: KEYFILEPATH, scopes: ['https://www.googleapis.com/auth/calendar'] });
 const calendar = google.calendar({ version: 'v3', auth });
 
-const OLD_URL_BASE = "http://127.0.0.1:9925";
-const NEW_URL_BASE = "https://mealie.wooller.com";
+//const OLD_URL_BASE = "http://127.0.0.1:9925";
+//const NEW_URL_BASE = "https://mealie.wooller.com";
+const OLD_URL_BASE = "https://mealie.wooller.com/recipe/";
+const NEW_URL_BASE = "https://mealie.wooller.com/g/home/r/";
 
 async function fixLinks() {
     console.log("🔍 Scanning ALL calendar events...");
