@@ -1,0 +1,14 @@
+[Unit]
+Description=Mealie and Google Calendar Two-Way Sync
+After=network.target
+
+[Service]
+Type=oneshot
+User=dan
+WorkingDirectory=/opt/mealie_integration
+ExecStart=/usr/bin/node /opt/mealie_integration/sync_master.js
+StandardOutput=append:/var/log/mealie_sync.log
+StandardError=append:/var/log/mealie_sync.log
+
+[Install]
+WantedBy=multi-user.target
