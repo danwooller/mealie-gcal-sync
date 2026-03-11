@@ -79,7 +79,7 @@ async function syncMaster() {
                 calendarId: CALENDAR_ID,
                 resource: {
                     summary: planName,
-                    description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/recipe/' + plan.recipe.slug : ''}`,
+                    description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`,
                     start: { date: planDate },
                     end: { date: planDate }
                 }
@@ -159,4 +159,5 @@ async function syncMaster() {
 
 
 syncMaster().catch(console.error);
+
 
