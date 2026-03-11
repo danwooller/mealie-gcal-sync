@@ -47,13 +47,16 @@ async function syncMaster() {
 
     // --- STEP 1: MATCHING & UPDATING ---
     for (const plan of mealiePlans) {
-        const planDate = plan.date; // "2026-03-05"
-        const planName = plan.recipe?.name || plan.title;
+        const planDate = plan.date; 
+    
+        // 1. Try Recipe Name, 2. Try Title, 3. Try Note, 4. Fallback
+        const planName = plan.recipe?.name || plan.title || plan.note || "Meal Plan Entry";
         
         // Find by ID or by strict Date/Name match
         const existingGCalEvent = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
             const hasId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
+            // Ensure we compare against the same fallback logic
             const isSameDayAndName = (gDate === planDate && g.summary === planName);
             return hasId || isSameDayAndName;
         });
@@ -152,5 +155,6 @@ async function syncMaster() {
 
     console.log("✨ Sync Finished.");
 }
+
 
 syncMaster().catch(console.error);
