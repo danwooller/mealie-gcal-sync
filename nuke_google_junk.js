@@ -1,3 +1,7 @@
+// Finds every calendar entry titled "Unnamed Meal" and permanently delete them from your Google Calendar.
+// The script asks Google for a list of up to 2,500 events from your specific "Meal Plan" calendar.
+// It uses the q: 'Unnamed Meal' parameter, which acts like a search bar to narrow down the results immediately.
+
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
