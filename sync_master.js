@@ -52,7 +52,11 @@ async function syncMaster() {
     for (const plan of mealiePlans) {
         try {
             const planDate = plan.date; 
-            const planName = plan.recipe?.name || plan.title || plan.note || "Meal Plan Entry";
+            let planName = plan.recipe?.name || plan.title || plan.note;
+            if (!planName) {
+                console.log(`⚠️ Skipping plan ${plan.id}: No name found.`);
+                continue; // Skip this iteration
+            }
             
             const existingGCalEvent = gEvents.find(g => {
                 const gDate = g.start.date || g.start.dateTime?.split('T')[0];
