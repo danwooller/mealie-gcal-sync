@@ -2,23 +2,14 @@ const { google } = require('googleapis');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const dns = require('node:dns');
+const https = require('node:https');
 
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
-
-async function robustApiCall(apiFn, retries = 3) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            return await apiFn();
-        } catch (err) {
-            if (err.code === 'ENETUNREACH' && i < retries - 1) {
-                console.log(`⚠️ Network unreachable. Retrying in 5 seconds...`);
-                await delay(5000);
-                continue;
-            }
-            throw err;
-        }
-    }
-}
+// --- NETWORK FIXES ---
+dns.setDefaultResultOrder('ipv4first');
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+const ipv4Agent = new https.Agent({ family: 4 });
+axios.defaults.httpsAgent = ipv4Agent;
 
 // --- CONFIGURATION ---
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
@@ -32,6 +23,8 @@ const auth = new google.auth.GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/calendar']
 });
 
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
 async function syncMaster() {
     console.log("🔄 Master Sync Starting...");
     const calendar = google.calendar({ version: 'v3', auth });
@@ -44,7 +37,6 @@ async function syncMaster() {
     // 2. Fetch Google Calendar Events
     const gRes = await calendar.events.list({ calendarId: CALENDAR_ID, singleEvents: true, timeMin: new Date().toISOString() });
     const gEvents = gRes.data.items || [];
-    const processedGCalIds = new Set();
 
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
@@ -59,7 +51,6 @@ async function syncMaster() {
         });
 
         if (existingGCalEvent) {
-            processedGCalIds.add(existingGCalEvent.id);
             // Adopt/Update if description is missing ID
             if (!existingGCalEvent.description?.includes(`MEALIE_ID: ${plan.id}`)) {
                 console.log(`📝 Adopting: ${planName}`);
@@ -70,6 +61,7 @@ async function syncMaster() {
                         description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`
                     }
                 });
+                await sleep(2000); // Throttling
             }
         } else {
             console.log(`➕ Creating: ${planName}`);
@@ -82,6 +74,7 @@ async function syncMaster() {
                     description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`
                 }
             });
+            await sleep(2000); // Throttling
         }
     }
     console.log("✨ Sync Finished.");
