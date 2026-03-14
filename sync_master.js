@@ -3,6 +3,23 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
+const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+async function robustApiCall(apiFn, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await apiFn();
+        } catch (err) {
+            if (err.code === 'ENETUNREACH' && i < retries - 1) {
+                console.log(`⚠️ Network unreachable. Retrying in 5 seconds...`);
+                await delay(5000);
+                continue;
+            }
+            throw err;
+        }
+    }
+}
+
 // --- CONFIGURATION ---
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
 const MEALIE_TOKEN = env.match(/MEALIE_API_KEY=["']?([^"'\s]+)["']?/)[1].trim();
