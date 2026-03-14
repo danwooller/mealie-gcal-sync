@@ -3,7 +3,6 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
-// --- CONFIG ---
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
 const MEALIE_TOKEN = env.match(/MEALIE_API_KEY=["']?([^"'\s]+)["']?/)[1].trim();
 const MEALIE_URL = "http://127.0.0.1:9925";
@@ -18,43 +17,39 @@ const auth = new google.auth.GoogleAuth({
 async function matchHistoric() {
     const calendar = google.calendar({ version: 'v3', auth });
     
-    // 1. Get existing recipes from Mealie
     console.log("📚 Fetching Mealie recipe library...");
     const libRes = await axios.get(`${MEALIE_URL}/api/recipes?per_page=1000`, { headers });
     const recipes = libRes.data.items || [];
 
-    // 2. Fetch Calendar Events
+    // Helper: Normalize strings for easier matching
+    const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    console.log("🔍 Fetching Calendar events...");
     const res = await calendar.events.list({ calendarId: CALENDAR_ID, orderBy: 'startTime', singleEvents: true });
-    
-    // LIMIT TO 2 FOR SAFETY
-    const events = (res.data.items || []).slice(0, 2); 
+    const events = (res.data.items || []).slice(0, 5); // Testing 5 now
     
     for (const event of events) {
         const mealDate = event.start.date || event.start.dateTime.split('T')[0];
-        const desc = event.description || "";
-        const urlMatch = desc.match(/https?:\/\/[^\s"<>]+/);
-        let recipeUrl = urlMatch ? urlMatch[0] : null;
+        const calendarName = event.summary || "";
+        
+        // Match by normalizing the names
+        const normalizedCalName = normalize(calendarName);
+        const existingRecipe = recipes.find(r => normalize(r.name) === normalizedCalName);
 
-        if (recipeUrl) {
-            // Unwrap if it's a google redirect
-            if (recipeUrl.includes('google.com/url?q=')) {
-                recipeUrl = new URL(recipeUrl).searchParams.get('q').split('&')[0];
-            }
-
-            // Match URL against Mealie Library
-            const existingRecipe = recipes.find(r => r.recipeSource === recipeUrl);
-
-            if (existingRecipe) {
-                console.log(`✅ MATCH: ${event.summary} -> ${existingRecipe.name}`);
-                
+        if (existingRecipe) {
+            console.log(`✅ MATCH: '${calendarName}' -> Found '${existingRecipe.name}'`);
+            
+            try {
                 await axios.post(`${MEALIE_URL}/api/households/mealplans`, {
                     date: mealDate,
                     recipeId: existingRecipe.id,
                     entryType: "dinner"
                 }, { headers });
-            } else {
-                console.log(`❌ NO MATCH: Could not find ${recipeUrl} in library.`);
+            } catch (err) {
+                console.log(`   ⚠️ Could not add to plan (maybe already exists?): ${err.message}`);
             }
+        } else {
+            console.log(`❌ NO MATCH: Could not find recipe titled '${calendarName}' in library.`);
         }
     }
 }
