@@ -2,6 +2,7 @@ const axios = require('axios');
 const fs = require('fs');
 const { google } = require('googleapis');
 const path = require('path');
+const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // --- CONFIG ---
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
@@ -56,7 +57,12 @@ async function syncMaster() {
             const existingGCalEvent = gEvents.find(g => {
                 const gDate = g.start.date || g.start.dateTime?.split('T')[0];
                 const hasId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
-                const isSameDayAndName = (gDate === planDate && g.summary === planName);
+                
+                // Normalize names to ignore (1), casing, and spaces
+                const cleanGSummary = normalize(g.summary || "");
+                const cleanPlanName = normalize(planName);
+                const isSameDayAndName = (gDate === planDate && cleanGSummary === cleanPlanName);
+                
                 return hasId || isSameDayAndName;
             });
 
