@@ -5,10 +5,10 @@ const fs = require('fs');
 const dns = require('node:dns');
 const https = require('node:https');
 
-// --- NETWORK FIXES ---
+// --- NETWORK HARDENING ---
 dns.setDefaultResultOrder('ipv4first');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
-const ipv4Agent = new https.Agent({ family: 4 });
+const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
 axios.defaults.httpsAgent = ipv4Agent;
 
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
@@ -24,27 +24,56 @@ const auth = new google.auth.GoogleAuth({
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
+// Helper to retry critical network calls
+async function retryCall(fn, label, maxRetries = 5) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            if (err.code === 'ENETUNREACH' || err.message.includes('ENETUNREACH')) {
+                console.log(`⚠️ [${label}] Network unreachable. Retry ${i+1}/${maxRetries} in 10s...`);
+                await sleep(10000);
+            } else {
+                throw err;
+            }
+        }
+    }
+    throw new Error(`Failed ${label} after ${maxRetries} retries.`);
+}
+
 async function syncMaster() {
-    console.log("🔄 Master Sync Starting (Resilient Mode)...");
+    console.log("🔄 Master Sync: Ultra-Resilient Mode");
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    const planRes = await axios.get(`${MEALIE_URL}/api/households/mealplans`, { headers });
-    const plans = planRes.data.items || [];
+    // 1. Initial Data Fetch with Retries
+    const plans = await retryCall(async () => {
+        const res = await axios.get(`${MEALIE_URL}/api/households/mealplans`, { headers });
+        return res.data.items || [];
+    }, "Mealie API");
 
-    // Re-fetch calendar inside the loop or use a fresh list to prevent duplicates
-    const gRes = await calendar.events.list({ calendarId: CALENDAR_ID, singleEvents: true, timeMin: new Date().toISOString() });
-    let gEvents = gRes.data.items || [];
+    const gEvents = await retryCall(async () => {
+        const res = await calendar.events.list({ 
+            calendarId: CALENDAR_ID, 
+            singleEvents: true, 
+            timeMin: new Date().toISOString() 
+        });
+        return res.data.items || [];
+    }, "Google Calendar API");
 
+    // 2. Processing Loop
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
-        const planName = plan.recipe?.name || plan.title || plan.note || "Unnamed Meal";
-        if (planName === "Unnamed Meal") continue; // Skip junk from Mealie side
+        const planName = plan.recipe?.name || plan.title || plan.note;
+        
+        if (!planName || planName === "Unnamed Meal") continue;
 
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
             return (g.description?.includes(`MEALIE_ID: ${plan.id}`)) || (gDate === planDate && g.summary === planName);
         });
+
+        const description = `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`;
 
         if (existing) {
             if (!existing.description?.includes(`MEALIE_ID: ${plan.id}`)) {
@@ -53,10 +82,10 @@ async function syncMaster() {
                     await calendar.events.patch({
                         calendarId: CALENDAR_ID,
                         eventId: existing.id,
-                        resource: { description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}` }
+                        resource: { description }
                     });
-                    await sleep(3000); 
-                } catch (e) { console.error(`⚠️ Network glitch on patch: ${planName}`); await sleep(5000); }
+                    await sleep(3000);
+                } catch (e) { console.error(`⚠️ Patch failed for ${planName}: ${e.message}`); }
             }
         } else {
             try {
@@ -67,17 +96,17 @@ async function syncMaster() {
                         summary: planName,
                         start: { date: planDate },
                         end: { date: planDate },
-                        description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`
+                        description
                     }
                 });
-                await sleep(3000); // 3 seconds is safer for your network
-            } catch (e) {
-                console.error(`⚠️ Network glitch on insert: ${planName}. Skipping...`);
-                await sleep(5000); // Wait longer if it hits a wall
-            }
+                await sleep(3000);
+            } catch (e) { console.error(`⚠️ Insert failed for ${planName}: ${e.message}`); }
         }
     }
     console.log("✨ Sync Finished.");
 }
 
-syncMaster().catch(err => console.error("FATAL ERROR:", err.message));
+syncMaster().catch(err => {
+    console.error("❌ Fatal Process Error:", err.message);
+    process.exit(1);
+});
