@@ -11,7 +11,6 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 const ipv4Agent = new https.Agent({ family: 4 });
 axios.defaults.httpsAgent = ipv4Agent;
 
-// --- CONFIGURATION ---
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
 const MEALIE_TOKEN = env.match(/MEALIE_API_KEY=["']?([^"'\s]+)["']?/)[1].trim();
 const MEALIE_URL = "http://127.0.0.1:9925";
@@ -26,55 +25,56 @@ const auth = new google.auth.GoogleAuth({
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
 async function syncMaster() {
-    console.log("🔄 Master Sync Starting...");
+    console.log("🔄 Master Sync Starting (Resilient Mode)...");
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    // 1. Fetch current Meal Plan from Mealie
     const planRes = await axios.get(`${MEALIE_URL}/api/households/mealplans`, { headers });
     const plans = planRes.data.items || [];
 
-    // 2. Fetch Google Calendar Events
+    // Re-fetch calendar inside the loop or use a fresh list to prevent duplicates
     const gRes = await calendar.events.list({ calendarId: CALENDAR_ID, singleEvents: true, timeMin: new Date().toISOString() });
-    const gEvents = gRes.data.items || [];
+    let gEvents = gRes.data.items || [];
 
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
         const planName = plan.recipe?.name || plan.title || plan.note || "Unnamed Meal";
-        
-        // Find existing event (Look for ID, or adopt via Name/Date)
-        const existingGCalEvent = gEvents.find(g => {
+        if (planName === "Unnamed Meal") continue; // Skip junk from Mealie side
+
+        const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
-            const hasId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
-            const isSameDayAndName = (gDate === planDate && g.summary === planName);
-            return hasId || isSameDayAndName;
+            return (g.description?.includes(`MEALIE_ID: ${plan.id}`)) || (gDate === planDate && g.summary === planName);
         });
 
-        if (existingGCalEvent) {
-            // Adopt/Update if description is missing ID
-            if (!existingGCalEvent.description?.includes(`MEALIE_ID: ${plan.id}`)) {
-                console.log(`📝 Adopting: ${planName}`);
-                await calendar.events.patch({
+        if (existing) {
+            if (!existing.description?.includes(`MEALIE_ID: ${plan.id}`)) {
+                try {
+                    console.log(`📝 Adopting: ${planName}`);
+                    await calendar.events.patch({
+                        calendarId: CALENDAR_ID,
+                        eventId: existing.id,
+                        resource: { description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}` }
+                    });
+                    await sleep(3000); 
+                } catch (e) { console.error(`⚠️ Network glitch on patch: ${planName}`); await sleep(5000); }
+            }
+        } else {
+            try {
+                console.log(`➕ Creating: ${planName}`);
+                await calendar.events.insert({
                     calendarId: CALENDAR_ID,
-                    eventId: existingGCalEvent.id,
-                    resource: { 
+                    resource: {
+                        summary: planName,
+                        start: { date: planDate },
+                        end: { date: planDate },
                         description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`
                     }
                 });
-                await sleep(2000); // Throttling
+                await sleep(3000); // 3 seconds is safer for your network
+            } catch (e) {
+                console.error(`⚠️ Network glitch on insert: ${planName}. Skipping...`);
+                await sleep(5000); // Wait longer if it hits a wall
             }
-        } else {
-            console.log(`➕ Creating: ${planName}`);
-            await calendar.events.insert({
-                calendarId: CALENDAR_ID,
-                resource: {
-                    summary: planName,
-                    start: { date: planDate },
-                    end: { date: planDate },
-                    description: `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`
-                }
-            });
-            await sleep(2000); // Throttling
         }
     }
     console.log("✨ Sync Finished.");
