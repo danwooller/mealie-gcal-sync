@@ -60,12 +60,12 @@ async function syncMaster() {
             
             const existingGCalEvent = gEvents.find(g => {
                 const gDate = g.start.date || g.start.dateTime?.split('T')[0];
+                
+                // 1. Check for the ID first (The ideal state)
                 const hasId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
                 
-                // Normalize names to ignore (1), casing, and spaces
-                const cleanGSummary = normalize(g.summary || "");
-                const cleanPlanName = normalize(planName);
-                const isSameDayAndName = (gDate === planDate && cleanGSummary === cleanPlanName);
+                // 2. Fallback: Check if the date and name match, even if the ID is missing
+                const isSameDayAndName = (gDate === planDate && g.summary === planName);
                 
                 return hasId || isSameDayAndName;
             });
