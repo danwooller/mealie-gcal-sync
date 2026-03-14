@@ -1,3 +1,9 @@
+// One-way synchronization tool that imports meals from a specific Google Calendar
+// into your Mealie instance. It doesn't just copy text; it scrapes recipes
+// from the web and organizes them in your Mealie library.
+// Pulls up to 1,000 events from a 10-year window.
+// Scrapes the "Description" of each calendar event to find a URL.
+
 const axios = require('axios');
 const fs = require('fs');
 const { google } = require('googleapis');
@@ -128,5 +134,6 @@ async function runSync() {
     }
     console.log("\n✨ Sync Complete! Your Mealie library and planner are now perfectly matched.");
 }
+
 
 runSync().catch(err => console.error("FATAL ERROR:", err.message));
