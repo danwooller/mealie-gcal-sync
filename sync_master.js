@@ -48,8 +48,18 @@ async function syncMaster() {
     }, "Mealie API");
 
     // 2. Look back 10 years
-    const tenYearsAgo = new Date();
-    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+    //const tenYearsAgo = new Date();
+    //tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+    const syncStartPoint = new Date("2015-01-01T00:00:00Z");
+    // (The "Big Bang" date)
+    const gRes = await retryCall(async () => {
+        return await calendar.events.list({ 
+            calendarId: CALENDAR_ID, 
+            singleEvents: true, 
+            timeMin: syncStartPoint.toISOString(), // Always looks back to 2015
+            maxResults: 5000 
+        });
+    }, "Google Calendar API");
 
     const gRes = await retryCall(async () => {
         return await calendar.events.list({ 
