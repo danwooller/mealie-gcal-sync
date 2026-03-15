@@ -41,13 +41,13 @@ async function syncMaster() {
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    // 1. Fetch ALL plans from Mealie (Increased limit to ensure we get everything)
-    const planRes = await retryCall(async () => {
+    // 1. Fetch ALL plans from Mealie
+    const plans = await retryCall(async () => {
         const res = await axios.get(`${MEALIE_URL}/api/households/mealplans?per_page=5000`, { headers });
         return res.data.items || [];
     }, "Mealie API");
 
-    // 2. Look back 10 years to cover 2018 and earlier
+    // 2. Look back 10 years
     const tenYearsAgo = new Date();
     tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
 
@@ -56,7 +56,7 @@ async function syncMaster() {
             calendarId: CALENDAR_ID, 
             singleEvents: true, 
             timeMin: tenYearsAgo.toISOString(),
-            maxResults: 5000 // Ensure we don't truncate the list
+            maxResults: 5000 
         });
     }, "Google Calendar API");
     
@@ -68,7 +68,6 @@ async function syncMaster() {
         const planName = plan.recipe?.name || plan.title || plan.note;
         if (!planName || planName === "Unnamed Meal") continue;
 
-        // MATCHING LOGIC
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
             const matchId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
@@ -87,11 +86,8 @@ async function syncMaster() {
                         eventId: existing.id,
                         resource: { description }
                     });
-                    await sleep(2000);
+                    await sleep(1500); 
                 } catch (e) { console.error(`⚠️ Patch failed: ${e.message}`); }
-            } else {
-                // Already synced - silent skip to keep logs clean
-                continue;
             }
         } else {
             try {
@@ -105,9 +101,8 @@ async function syncMaster() {
                         description
                     }
                 });
-                // Update local cache so we don't double-insert if Mealie has duplicates
                 gEvents.push({ summary: planName, start: { date: planDate }, description });
-                await sleep(3000); 
+                await sleep(2500); 
             } catch (e) { console.error(`⚠️ Insert failed: ${e.message}`); }
         }
     }
@@ -116,5 +111,5 @@ async function syncMaster() {
 
 syncMaster().catch(err => {
     console.error("❌ Fatal Process Error:", err.message);
-    process.exit(TenYearsAgo);
+    process.exit(1);
 });
