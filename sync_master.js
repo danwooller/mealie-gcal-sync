@@ -67,8 +67,13 @@ async function syncMaster() {
 
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
-        const planName = plan.recipe?.name || plan.title || plan.note;
-        if (!planName || planName === "Unnamed Meal") continue;
+        // Improved naming logic: prioritize recipe name, then title, then note.
+        const planName = (plan.recipe?.name || plan.title || plan.note || "").trim();
+        // CRITICAL FILTER: If it has no name, or is explicitly "Unnamed Meal", skip it.
+        if (!planName || planName.toLowerCase() === "unnamed meal") {
+            console.log(`⏭️ Skipping empty slot on ${planDate}`);
+            continue;
+        }
 
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
