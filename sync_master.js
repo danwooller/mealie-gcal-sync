@@ -24,58 +24,55 @@ const auth = new google.auth.GoogleAuth({
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-// Helper to retry critical network calls
 async function retryCall(fn, label, maxRetries = 5) {
     for (let i = 0; i < maxRetries; i++) {
-        try {
-            return await fn();
-        } catch (err) {
+        try { return await fn(); } catch (err) {
             if (err.code === 'ENETUNREACH' || err.message.includes('ENETUNREACH')) {
-                console.log(`⚠️ [${label}] Network unreachable. Retry ${i+1}/${maxRetries} in 10s...`);
-                await sleep(10000);
-            } else {
-                throw err;
-            }
+                console.log(`⚠️ [${label}] Network unreachable. Retry ${i+1}/${maxRetries} in 15s...`);
+                await sleep(15000);
+            } else { throw err; }
         }
     }
     throw new Error(`Failed ${label} after ${maxRetries} retries.`);
 }
 
 async function syncMaster() {
-    console.log("🔄 Master Sync: Ultra-Resilient Mode");
+    console.log("🔄 Master Sync: Anti-Duplicate Mode");
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    // 1. Initial Data Fetch with Retries
     const plans = await retryCall(async () => {
         const res = await axios.get(`${MEALIE_URL}/api/households/mealplans`, { headers });
         return res.data.items || [];
     }, "Mealie API");
 
-    const gEvents = await retryCall(async () => {
-        const res = await calendar.events.list({ 
+    const gRes = await retryCall(async () => {
+        return await calendar.events.list({ 
             calendarId: CALENDAR_ID, 
             singleEvents: true, 
             timeMin: new Date().toISOString() 
         });
-        return res.data.items || [];
     }, "Google Calendar API");
+    
+    let gEvents = gRes.data.items || [];
 
-    // 2. Processing Loop
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
         const planName = plan.recipe?.name || plan.title || plan.note;
-        
         if (!planName || planName === "Unnamed Meal") continue;
 
+        // CRITICAL CHECK: Does this ID or this Name/Date combo already exist in the list we fetched?
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
-            return (g.description?.includes(`MEALIE_ID: ${plan.id}`)) || (gDate === planDate && g.summary === planName);
+            const matchId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
+            const matchName = (gDate === planDate && g.summary === planName);
+            return matchId || matchName;
         });
 
         const description = `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`;
 
         if (existing) {
+            // Just update the description to ensure the ID is there for next time
             if (!existing.description?.includes(`MEALIE_ID: ${plan.id}`)) {
                 try {
                     console.log(`📝 Adopting: ${planName}`);
@@ -85,7 +82,9 @@ async function syncMaster() {
                         resource: { description }
                     });
                     await sleep(3000);
-                } catch (e) { console.error(`⚠️ Patch failed for ${planName}: ${e.message}`); }
+                } catch (e) { console.error(`⚠️ Patch failed: ${e.message}`); }
+            } else {
+                console.log(`⏭️ Skipping (Already exists): ${planName}`);
             }
         } else {
             try {
@@ -99,8 +98,10 @@ async function syncMaster() {
                         description
                     }
                 });
-                await sleep(3000);
-            } catch (e) { console.error(`⚠️ Insert failed for ${planName}: ${e.message}`); }
+                // Add to our local list so if we loop back, we don't create it again
+                gEvents.push({ summary: planName, start: { date: planDate }, description });
+                await sleep(4000); // Higher delay to keep the network stable
+            } catch (e) { console.error(`⚠️ Insert failed: ${e.message}`); }
         }
     }
     console.log("✨ Sync Finished.");
