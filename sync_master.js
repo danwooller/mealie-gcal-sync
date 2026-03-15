@@ -6,10 +6,10 @@ const dns = require('node:dns');
 const https = require('node:https');
 
 // --- NETWORK HARDENING ---
-dns.setDefaultResultOrder('ipv4first');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
-const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
-axios.defaults.httpsAgent = ipv4Agent;
+//dns.setDefaultResultOrder('ipv4first');
+//dns.setServers(['8.8.8.8', '8.8.4.4']);
+//const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
+//axios.defaults.httpsAgent = ipv4Agent;
 
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
 const MEALIE_TOKEN = env.match(/MEALIE_API_KEY=["']?([^"'\s]+)["']?/)[1].trim();
