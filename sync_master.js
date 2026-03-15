@@ -57,7 +57,7 @@ async function syncMaster() {
         return await calendar.events.list({ 
             calendarId: CALENDAR_ID, 
             singleEvents: true, 
-            timeMin: tenYearsAgo.toISOString(),
+            timeMin: syncStartPoint.toISOString(), // Always looks back to 2015
             maxResults: 5000 
         });
     }, "Google Calendar API");
