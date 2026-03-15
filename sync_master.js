@@ -37,31 +37,38 @@ async function retryCall(fn, label, maxRetries = 5) {
 }
 
 async function syncMaster() {
-    console.log("🔄 Master Sync: Anti-Duplicate Mode");
+    console.log("🔄 Master Sync: Deep History Mode (2016-Present)");
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    const plans = await retryCall(async () => {
-        const res = await axios.get(`${MEALIE_URL}/api/households/mealplans`, { headers });
+    // 1. Fetch ALL plans from Mealie (Increased limit to ensure we get everything)
+    const planRes = await retryCall(async () => {
+        const res = await axios.get(`${MEALIE_URL}/api/households/mealplans?per_page=5000`, { headers });
         return res.data.items || [];
     }, "Mealie API");
+
+    // 2. Look back 10 years to cover 2018 and earlier
+    const tenYearsAgo = new Date();
+    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
 
     const gRes = await retryCall(async () => {
         return await calendar.events.list({ 
             calendarId: CALENDAR_ID, 
             singleEvents: true, 
-            timeMin: new Date().toISOString() 
+            timeMin: tenYearsAgo.toISOString(),
+            maxResults: 5000 // Ensure we don't truncate the list
         });
     }, "Google Calendar API");
     
     let gEvents = gRes.data.items || [];
+    console.log(`📅 Loaded ${gEvents.length} existing calendar events for comparison.`);
 
     for (const plan of plans) {
         const planDate = plan.date.split('T')[0];
         const planName = plan.recipe?.name || plan.title || plan.note;
         if (!planName || planName === "Unnamed Meal") continue;
 
-        // CRITICAL CHECK: Does this ID or this Name/Date combo already exist in the list we fetched?
+        // MATCHING LOGIC
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
             const matchId = g.description?.includes(`MEALIE_ID: ${plan.id}`);
@@ -72,23 +79,23 @@ async function syncMaster() {
         const description = `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`;
 
         if (existing) {
-            // Just update the description to ensure the ID is there for next time
             if (!existing.description?.includes(`MEALIE_ID: ${plan.id}`)) {
                 try {
-                    console.log(`📝 Adopting: ${planName}`);
+                    console.log(`📝 Adopting: [${planDate}] ${planName}`);
                     await calendar.events.patch({
                         calendarId: CALENDAR_ID,
                         eventId: existing.id,
                         resource: { description }
                     });
-                    await sleep(3000);
+                    await sleep(2000);
                 } catch (e) { console.error(`⚠️ Patch failed: ${e.message}`); }
             } else {
-                console.log(`⏭️ Skipping (Already exists): ${planName}`);
+                // Already synced - silent skip to keep logs clean
+                continue;
             }
         } else {
             try {
-                console.log(`➕ Creating: ${planName}`);
+                console.log(`➕ Creating: [${planDate}] ${planName}`);
                 await calendar.events.insert({
                     calendarId: CALENDAR_ID,
                     resource: {
@@ -98,9 +105,9 @@ async function syncMaster() {
                         description
                     }
                 });
-                // Add to our local list so if we loop back, we don't create it again
+                // Update local cache so we don't double-insert if Mealie has duplicates
                 gEvents.push({ summary: planName, start: { date: planDate }, description });
-                await sleep(4000); // Higher delay to keep the network stable
+                await sleep(3000); 
             } catch (e) { console.error(`⚠️ Insert failed: ${e.message}`); }
         }
     }
@@ -109,5 +116,5 @@ async function syncMaster() {
 
 syncMaster().catch(err => {
     console.error("❌ Fatal Process Error:", err.message);
-    process.exit(1);
+    process.exit(TenYearsAgo);
 });
