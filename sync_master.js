@@ -6,10 +6,10 @@ const dns = require('node:dns');
 const https = require('node:https');
 
 // --- NETWORK HARDENING ---
-//dns.setDefaultResultOrder('ipv4first');
-//dns.setServers(['8.8.8.8', '8.8.4.4']);
-//const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
-//axios.defaults.httpsAgent = ipv4Agent;
+dns.setDefaultResultOrder('ipv4first');
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+const ipv4Agent = new https.Agent({ family: 4, keepAlive: true });
+axios.defaults.httpsAgent = ipv4Agent;
 
 const env = fs.readFileSync('/usr/local/bin/common_keys.txt', 'utf8');
 const MEALIE_TOKEN = env.match(/MEALIE_API_KEY=["']?([^"'\s]+)["']?/)[1].trim();
@@ -37,29 +37,32 @@ async function retryCall(fn, label, maxRetries = 5) {
 }
 
 async function syncMaster() {
-    // Define the Window: 30 days back, 180 days forward
+    // Rolling Window: 30 days back, 180 days forward
     const now = new Date();
-    const timeMin = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-    const timeMax = new Date(now.getTime() + (180 * 24 * 60 * 60 * 1000));
+    const timeMinDate = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+    const timeMaxDate = new Date(now.getTime() + (180 * 24 * 60 * 60 * 1000));
 
-    console.log(`🔄 Master Sync: Rolling Window (${timeMin.toISOString().split('T')[0]} to ${timeMax.toISOString().split('T')[0]})`);
+    const timeMinStr = timeMinDate.toISOString().split('T')[0];
+    const timeMaxStr = timeMaxDate.toISOString().split('T')[0];
+
+    console.log(`🔄 Master Sync: Rolling Window (${timeMinStr} to ${timeMaxStr})`);
     
     const calendar = google.calendar({ version: 'v3', auth });
     const headers = { 'Authorization': `Bearer ${MEALIE_TOKEN}` };
 
-    // 1. Fetch plans from Mealie for the window
+    // 1. Fetch plans from Mealie
     const plans = await retryCall(async () => {
-        const res = await axios.get(`${MEALIE_URL}/api/households/mealplans?start_date=${timeMin.toISOString().split('T')[0]}&end_date=${timeMax.toISOString().split('T')[0]}`, { headers });
+        const res = await axios.get(`${MEALIE_URL}/api/households/mealplans?start_date=${timeMinStr}&end_date=${timeMaxStr}`, { headers });
         return res.data.items || [];
     }, "Mealie API");
 
-    // 2. Fetch GCal events for the same window
+    // 2. Fetch GCal events
     const gRes = await retryCall(async () => {
         return await calendar.events.list({ 
             calendarId: CALENDAR_ID, 
             singleEvents: true, 
-            timeMin: timeMin.toISOString(),
-            timeMax: timeMax.toISOString(),
+            timeMin: timeMinDate.toISOString(),
+            timeMax: timeMaxDate.toISOString(),
             maxResults: 1000 
         });
     }, "Google Calendar API");
@@ -71,8 +74,12 @@ async function syncMaster() {
         const planDate = plan.date.split('T')[0];
         const planName = (plan.recipe?.name || plan.title || plan.note || "").trim();
         
-        // Strict Filter
         if (!planName || planName.toLowerCase() === "unnamed meal") continue;
+
+        // Calculate the exclusive end date (next day)
+        const endDt = new Date(planDate);
+        endDt.setDate(endDt.getDate() + 1);
+        const nextDay = endDt.toISOString().split('T')[0];
 
         const existing = gEvents.find(g => {
             const gDate = g.start.date || g.start.dateTime?.split('T')[0];
@@ -84,13 +91,21 @@ async function syncMaster() {
         const description = `MEALIE_ID: ${plan.id}\n${plan.recipe ? MEALIE_PUBLIC_URL + '/g/home/r/' + plan.recipe.slug : ''}`;
 
         if (existing) {
-            if (!existing.description?.includes(`MEALIE_ID: ${plan.id}`)) {
+            // Update if ID is missing or if the end date was wrong (part of the fix)
+            const currentGDateEnd = existing.end.date || existing.end.dateTime?.split('T')[0];
+            const needsUpdate = !existing.description?.includes(`MEALIE_ID: ${plan.id}`) || currentGDateEnd === planDate;
+
+            if (needsUpdate) {
                 try {
-                    console.log(`📝 Adopting: [${planDate}] ${planName}`);
+                    console.log(`📝 Updating/Adopting: [${planDate}] ${planName}`);
                     await calendar.events.patch({
                         calendarId: CALENDAR_ID,
                         eventId: existing.id,
-                        resource: { description }
+                        resource: { 
+                            description,
+                            start: { date: planDate },
+                            end: { date: nextDay } // Fixing the "day before" shift
+                        }
                     });
                     await sleep(1000); 
                 } catch (e) { console.error(`⚠️ Patch failed: ${e.message}`); }
@@ -103,11 +118,11 @@ async function syncMaster() {
                     resource: {
                         summary: planName,
                         start: { date: planDate },
-                        end: { date: planDate },
+                        end: { date: nextDay }, // Proper all-day end date
                         description
                     }
                 });
-                gEvents.push({ summary: planName, start: { date: planDate }, description });
+                gEvents.push({ summary: planName, start: { date: planDate }, end: { date: nextDay }, description });
                 await sleep(2000); 
             } catch (e) { console.error(`⚠️ Insert failed: ${e.message}`); }
         }
